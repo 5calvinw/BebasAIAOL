@@ -115,7 +115,7 @@ async def websocket_endpoint(websocket: WebSocket):
     print("Client connected")
     
     # Instantiate smoother per client connection
-    smoother = PredictionSmoother(maxlen=2)
+    smoother = PredictionSmoother(maxlen=4)
     
     try:
         while True:
