@@ -1,7 +1,6 @@
 import React from 'react';
 import { ChevronRight, CheckCircle2, RefreshCw } from 'lucide-react';
 
-// Add onTypeClick to props
 const HistoryLog = ({ history, onTypeClick }) => {
   return (
     <div className="p-6 max-w-7xl mx-auto h-screen flex flex-col">
@@ -23,14 +22,16 @@ const HistoryLog = ({ history, onTypeClick }) => {
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Timestamp</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Plastic Type</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Condition</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Confidence</th>
+                {/* REMOVED CONFIDENCE COLUMN */}
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-12 text-center text-slate-400">No records found in Database.</td>
+                  <td colSpan="4" className="px-6 py-12 text-center text-slate-400">
+                    No records found in Database.
+                  </td>
                 </tr>
               ) : (
                 history.map((item) => (
@@ -38,9 +39,8 @@ const HistoryLog = ({ history, onTypeClick }) => {
                     <td className="px-6 py-4 text-sm text-slate-600 font-mono">
                       {item.timestamp ? new Date(item.timestamp).toLocaleString() : 'N/A'}
                     </td>
-                    
+
                     <td className="px-6 py-4">
-                      {/* WRAPPED IN BUTTON / ADDED ONCLICK */}
                       <button
                         onClick={() => onTypeClick && onTypeClick(item.plasticTypeID)}
                         className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-wide border border-transparent transition-transform hover:scale-105 hover:shadow-sm cursor-pointer
@@ -54,7 +54,9 @@ const HistoryLog = ({ history, onTypeClick }) => {
                     </td>
 
                     <td className="px-6 py-4 text-sm text-slate-700">{item.condition}</td>
-                    <td className="px-6 py-4 text-sm text-slate-500">{(item.confidence * 100).toFixed(1)}%</td>
+
+                    {/* REMOVED CONFIDENCE DATA */}
+
                     <td className="px-6 py-4">
                       {item.condition === 'Clean' ? (
                         <span className="text-emerald-600 flex items-center gap-1 text-xs font-bold">

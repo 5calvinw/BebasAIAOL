@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Settings, History, Loader2 } from 'lucide-react';
+import { Play, Pause, Loader2, CheckCircle2 } from 'lucide-react';
 import { db } from '../db';
-import { PLASTIC_STYLE_MAP } from '../utils/constants';
 
 const Scanner = ({ onScanComplete }) => {
   const videoRef = useRef(null);
@@ -9,9 +8,22 @@ const Scanner = ({ onScanComplete }) => {
   const socketRef = useRef(null);
   const requestRef = useRef(null);
 
-  const [isScanning, setIsScanning] = useState(false);
-  const [liveData, setLiveData] = useState(null);
+  // --- AUTO-SAVE LOGIC REFS ---
+  // Tracks how many consistent frames we've seen for a specific ID
+  // Structure: { [track_id]: { count: number, signature: string } }
+  const scanTrackerRef = useRef(new Map());
+
+  // Tracks IDs that have already been saved to DB to prevent double-saving
+  const savedSessionsRef = useRef(new Set());
+
+  // Persistence Refs (For smoothing UI)
+  const lastDetectionsRef = useRef([]);
+  const lastDetectionTimeRef = useRef(Date.now());
+
+  // UI States
+  const [isPaused, setIsPaused] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [lastSavedItem, setLastSavedItem] = useState(null);
 
   useEffect(() => {
     startCamera();
@@ -34,14 +46,36 @@ const Scanner = ({ onScanComplete }) => {
     };
 
     socketRef.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setLiveData(data);
+      if (isPaused) return;
 
-      if (data.detections) {
+      const data = JSON.parse(event.data);
+
+      if (data.detections && data.detections.length > 0) {
+        // 1. Update UI Refs
+        lastDetectionsRef.current = data.detections;
+        lastDetectionTimeRef.current = Date.now();
+
+        // 2. Draw Boxes
         drawOverlay(data.detections);
+
+        // 3. Process ALL detections for auto-save (Multi-item support)
+        data.detections.forEach((det) => {
+          handleAutoSaveLogic(det);
+        });
+      } else {
+        const timeSinceLast = Date.now() - lastDetectionTimeRef.current;
+        if (timeSinceLast < 200 && lastDetectionsRef.current.length > 0) {
+          drawOverlay(lastDetectionsRef.current);
+        } else {
+          clearOverlay();
+        }
       }
 
       requestRef.current = requestAnimationFrame(processFrame);
+    };
+
+    socketRef.current.onerror = (error) => {
+      console.error('❌ WebSocket Error:', error);
     };
 
     socketRef.current.onclose = () => {
@@ -70,6 +104,7 @@ const Scanner = ({ onScanComplete }) => {
       }
     } catch (err) {
       console.error('Error accessing camera:', err);
+      alert('Cannot access camera. Please grant camera permissions.');
     }
   };
 
@@ -80,92 +115,135 @@ const Scanner = ({ onScanComplete }) => {
   };
 
   const processFrame = () => {
-    if (!videoRef.current || !socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+    // If paused, we keep the loop alive but do nothing
+    if (isPaused || !videoRef.current || !socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       requestRef.current = requestAnimationFrame(processFrame);
       return;
     }
 
-    const sendWidth = 1280;
-    const sendHeight = 720;
+    const offCanvas = document.createElement('canvas');
+    const w = videoRef.current.videoWidth;
+    const h = videoRef.current.videoHeight;
 
-    const modelCanvas = document.createElement('canvas');
-    modelCanvas.width = sendWidth;
-    modelCanvas.height = sendHeight;
-    const ctx = modelCanvas.getContext('2d');
+    if (w === 0 || h === 0) return;
 
-    const actualW = videoRef.current.videoWidth;
-    const actualH = videoRef.current.videoHeight;
+    offCanvas.width = w;
+    offCanvas.height = h;
+    const ctx = offCanvas.getContext('2d');
 
-    modelCanvas.width = actualW;
-    modelCanvas.height = actualH;
-    ctx.drawImage(videoRef.current, 0, 0, actualW, actualH);
+    ctx.drawImage(videoRef.current, 0, 0, w, h);
 
-    modelCanvas.toBlob((blob) => {
-      if (blob) socketRef.current.send(blob);
-    }, 'image/png');
+    offCanvas.toBlob(
+      (blob) => {
+        if (blob && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(blob);
+        }
+      },
+      'image/webp',
+      0.9
+    );
+  };
+
+  const clearOverlay = () => {
+    if (!canvasRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
   };
 
   const drawOverlay = (detections) => {
-    if (!canvasRef.current || !detections) return;
+    if (!canvasRef.current || !videoRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
+
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    const scaleX = canvasRef.current.width / 1280;
-    const scaleY = canvasRef.current.height / 720;
+    const scaleX = canvasRef.current.width / videoRef.current.videoWidth;
+    const scaleY = canvasRef.current.height / videoRef.current.videoHeight;
 
     detections.forEach((det) => {
       const [x1, y1, x2, y2] = det.bbox;
+
       const rX = x1 * scaleX;
       const rY = y1 * scaleY;
       const rW = (x2 - x1) * scaleX;
       const rH = (y2 - y1) * scaleY;
 
-      ctx.strokeStyle = det.color || '#10B981';
+      const isSaved = savedSessionsRef.current.has(det.track_id);
+
+      // Draw Box
+      ctx.strokeStyle = isSaved ? '#3b82f6' : det.color || '#10B981'; // Blue if saved, else standard color
       ctx.lineWidth = 4;
       ctx.strokeRect(rX, rY, rW, rH);
 
-      const text = `${det.class} | ${det.condition} (${(det.confidence * 100).toFixed(0)}%)`;
-
-      ctx.font = 'bold 20px monospace';
+      // Draw Label (REMOVED CONFIDENCE)
+      const text = isSaved ? `SAVED` : `${det.class} | ${det.condition}`;
+      ctx.font = 'bold 24px monospace';
       const textMetrics = ctx.measureText(text);
 
-      ctx.fillStyle = det.color || '#10B981';
-      ctx.fillRect(rX, rY - 30, textMetrics.width + 10, 30);
+      ctx.fillStyle = isSaved ? '#3b82f6' : det.color || '#10B981';
+      ctx.fillRect(rX, rY - 35, textMetrics.width + 10, 35);
 
-      ctx.fillStyle = '#000000';
+      ctx.fillStyle = det.condition === 'Clean' ? '#000000' : '#FFFFFF';
       ctx.fillText(text, rX + 5, rY - 8);
     });
   };
 
-  const handleScan = async () => {
-    const result = liveData?.best_result || (liveData?.confidence ? liveData : null);
+  // --- CORE LOGIC: MULTI-ITEM STABILITY CHECK ---
+  const handleAutoSaveLogic = async (result) => {
+    const trackId = result.track_id;
 
-    if (!result) {
-      alert('No object detected yet.');
-      return;
+    // 1. Ignore if already saved
+    if (savedSessionsRef.current.has(trackId)) return;
+
+    // 2. Create a signature to detect change (e.g. "PET-Clean")
+    // If the model flickers from "Clean" to "Dirty", we consider that unstable and restart.
+    const currentSignature = `${result.class}-${result.condition}`;
+
+    // 3. Get existing tracker for this ID or initialize
+    let tracker = scanTrackerRef.current.get(trackId) || { count: 0, signature: currentSignature };
+
+    // 4. Compare Signature
+    if (tracker.signature === currentSignature) {
+      // Prediction is STABLE, increment count
+      tracker.count += 1;
+    } else {
+      // Prediction FLIPPED (e.g., PET -> HDPE). RESTART count.
+      tracker.count = 1;
+      tracker.signature = currentSignature;
     }
 
-    setIsScanning(true);
+    // 5. Update Map
+    scanTrackerRef.current.set(trackId, tracker);
 
+    // 6. Trigger Save if Threshold Reached (15 Frames)
+    // UPDATED: Changed from 10 to 15 as requested
+    if (tracker.count >= 15) {
+      // Mark as saved IMMEDIATELY to prevent double-fire while async DB call happens
+      savedSessionsRef.current.add(trackId);
+
+      // Save
+      await saveToDatabase(result);
+
+      // Visual Feedback
+      setLastSavedItem(`${result.class} - ${result.condition}`);
+      setTimeout(() => setLastSavedItem(null), 3000);
+
+      // Haptic Feedback
+      if (navigator.vibrate) navigator.vibrate(200);
+    }
+  };
+
+  const saveToDatabase = async (result) => {
     const typeMap = {
       PET: 1,
-      0: 1,
       HDPE: 2,
-      1: 2,
       PVC: 3,
-      2: 3,
       LDPE: 4,
-      3: 4,
       PP: 5,
-      4: 5,
       PS: 6,
-      5: 6,
-      Other: 7,
-      6: 7,
+      OTHER: 7,
     };
 
-    const rawLabel = result.class || 'Other';
-    const plasticTypeID = typeMap[rawLabel] || 7;
+    const plasticTypeID = typeMap[result.class] || 7;
 
     const newScanData = {
       plasticTypeID: plasticTypeID,
@@ -177,13 +255,23 @@ const Scanner = ({ onScanComplete }) => {
 
     try {
       await db.collection.add(newScanData);
-      setIsScanning(false);
-      alert(`Saved: ${rawLabel} (${result.condition})`);
       if (onScanComplete) onScanComplete();
     } catch (e) {
       console.error('Error saving scan', e);
-      alert('Error saving to database: ' + e.message);
-      setIsScanning(false);
+    }
+  };
+
+  const togglePause = () => {
+    const nextState = !isPaused;
+    setIsPaused(nextState);
+
+    if (nextState) {
+      // We are pausing: Freeze the actual video element
+      if (videoRef.current) videoRef.current.pause();
+      // NOTE: We do NOT call clearOverlay() here, so the user can see the last detection
+    } else {
+      // We are resuming: Play the video
+      if (videoRef.current) videoRef.current.play();
     }
   };
 
@@ -191,41 +279,47 @@ const Scanner = ({ onScanComplete }) => {
     <div className="h-full flex flex-col relative bg-black">
       <div className="flex-1 relative overflow-hidden flex items-center justify-center">
         {!isConnected && (
-          <div className="absolute top-4 left-4 z-50 bg-red-500/80 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2">
-            <Loader2 className="animate-spin" size={12} /> Connecting to AI...
+          <div className="absolute top-4 left-4 z-50 bg-rose-500/90 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg backdrop-blur">
+            <Loader2 className="animate-spin" size={16} />
+            <span>Connecting...</span>
+          </div>
+        )}
+
+        {isPaused && (
+          <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center">
+            <div className="text-white flex flex-col items-center">
+              <Pause size={48} />
+              <span className="font-bold text-xl mt-2">PAUSED</span>
+            </div>
+          </div>
+        )}
+
+        {/* Success Toast */}
+        {lastSavedItem && (
+          <div className="absolute top-8 left-1/2 transform -translate-x-1/2 z-50 bg-emerald-500 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 animate-bounce">
+            <CheckCircle2 size={24} className="text-white" />
+            <span className="font-bold">Saved: {lastSavedItem}</span>
           </div>
         )}
 
         <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
-
-        {isScanning && (
-          <div className="absolute inset-0 z-20 pointer-events-none bg-emerald-500/20 animate-pulse">
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="bg-slate-900/90 text-emerald-400 px-6 py-3 rounded-full font-mono border border-emerald-500/30 backdrop-blur-md">
-                SAVING...
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      <div className="bg-white p-6 border-t border-slate-200 z-10 flex justify-center items-center gap-8">
-        <button className="p-4 rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 transition-colors">
-          <Settings size={24} />
-        </button>
-
+      {/* NEW CONTROL BAR */}
+      <div className="bg-white p-6 border-t border-slate-200 z-10 flex justify-center items-center pb-10">
         <button
-          onClick={handleScan}
-          disabled={!isConnected || isScanning}
-          className={`w-20 h-20 rounded-full border-4 border-slate-200 flex items-center justify-center shadow-lg transition-all transform hover:scale-105 active:scale-95 
-            ${isConnected ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-slate-400 cursor-not-allowed'}`}
+          onClick={togglePause}
+          className={`
+            w-20 h-20 rounded-full flex items-center justify-center shadow-xl transition-all duration-200 transform
+            ${
+              !isPaused
+                ? 'bg-rose-100 text-rose-600 hover:bg-rose-200 hover:scale-105 active:scale-95'
+                : 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200 hover:scale-105 active:scale-95'
+            }
+          `}
         >
-          <Camera size={32} className="text-white" />
-        </button>
-
-        <button className="p-4 rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 transition-colors">
-          <History size={24} />
+          {isPaused ? <Play size={36} fill="currentColor" /> : <Pause size={36} fill="currentColor" />}
         </button>
       </div>
     </div>
