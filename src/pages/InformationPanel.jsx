@@ -3,11 +3,15 @@ import { Camera } from 'lucide-react';
 import { db } from '../db';
 import { PLASTIC_STYLE_MAP } from '../utils/constants';
 
-// Accept initialTypeId as a prop
+const EXTENSIONS = ['png', 'jpg', 'jpeg']; // The order we will try
+
 const InformationPanel = ({ initialTypeId }) => {
   const [types, setTypes] = useState([]);
   const [selectedType, setSelectedType] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // New State: Tracks which extension we are currently trying (0 = png, 1 = jpg, etc.)
+  const [extIndex, setExtIndex] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -19,9 +23,6 @@ const InformationPanel = ({ initialTypeId }) => {
         });
         setTypes(mergedData);
         
-        // LOGIC UPDATE:
-        // If an initialTypeId was passed (from clicking HistoryLog), use it.
-        // Otherwise, default to the first item (mergedData[0]).
         if (initialTypeId) {
            const target = mergedData.find(t => t.plasticTypeID === initialTypeId);
            if (target) setSelectedType(target);
@@ -37,7 +38,12 @@ const InformationPanel = ({ initialTypeId }) => {
       }
     };
     fetchData();
-  }, [initialTypeId]); // Re-run if the ID passed from App.jsx changes
+  }, [initialTypeId]);
+
+  // Reset the extension trial counter whenever the user selects a different plastic type
+  useEffect(() => {
+    setExtIndex(0);
+  }, [selectedType]);
 
   if (loading) return <div className="p-10 text-slate-400">Loading library...</div>;
 
@@ -67,7 +73,7 @@ const InformationPanel = ({ initialTypeId }) => {
           <div className="max-w-3xl mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
             <div className="mb-6">
               <h1 className="text-3xl font-bold text-slate-900 mb-2">
-                {selectedType.code} <span className="text-slate-400 font-light">({selectedType.name || `RIC ${selectedType.RICNumber}`})</span>
+                {selectedType.code} <span className="text-slate-400 font-light">{selectedType.name }</span>
               </h1>
               <div className="flex items-center gap-4 text-sm font-medium">
                 <span className="text-slate-500">Resin Identification Code (RIC) = {selectedType.RICNumber}</span>
@@ -81,10 +87,34 @@ const InformationPanel = ({ initialTypeId }) => {
               </div>
             </div>
 
-            <div className="w-full h-64 bg-slate-200 rounded-2xl mb-8 flex items-center justify-center relative overflow-hidden group">
-               <div className="text-slate-400 font-handwriting text-2xl rotate-[-5deg]">picture placeholder</div>
-               <div className="absolute top-4 right-4 text-slate-300"><Camera size={32} /></div>
+            {/* --- SMART IMAGE SECTION --- */}
+            <div className="w-full h-64 bg-slate-200 rounded-2xl mb-8 relative overflow-hidden group flex items-center justify-center">
+               <img 
+                  // Uses the current index to decide extension: 1.png, then 1.jpg, etc.
+                  key={`${selectedType.plasticTypeID}-${extIndex}`} // Key ensures React re-renders fresh when index changes
+                  src={`/images/${selectedType.RICNumber}.${EXTENSIONS[extIndex]}`}
+                  alt={`${selectedType.name} example`}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    // This logic runs if the image fails to load
+                    if (extIndex < EXTENSIONS.length - 1) {
+                        // If we haven't tried all extensions yet, try the next one
+                        setExtIndex(prev => prev + 1);
+                    } else {
+                        // If we ran out of extensions, hide image and show placeholder
+                        e.target.style.display = 'none'; 
+                        e.target.nextSibling.style.display = 'flex';
+                    }
+                  }}
+               />
+               
+               {/* Fallback Placeholder */}
+               <div className="hidden w-full h-full absolute top-0 left-0 bg-slate-200 items-center justify-center flex-col">
+                  <div className="text-slate-400 font-handwriting text-2xl rotate-[-5deg]">Image not found</div>
+                  <div className="mt-2 text-slate-300"><Camera size={32} /></div>
+               </div>
             </div>
+            {/* --------------------------- */}
 
             <div className="space-y-6">
               <div>

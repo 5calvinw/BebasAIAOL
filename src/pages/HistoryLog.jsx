@@ -9,9 +9,7 @@ const HistoryLog = ({ history, onTypeClick }) => {
           <h2 className="text-2xl font-bold text-slate-900">Analysis Log</h2>
           <p className="text-slate-500">Full audit trail of all scanned items.</p>
         </div>
-        <button className="flex items-center gap-2 text-emerald-600 font-medium hover:bg-emerald-50 px-4 py-2 rounded-lg transition-colors">
-          Export CSV <ChevronRight size={16} />
-        </button>
+        
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex-1 overflow-hidden flex flex-col">

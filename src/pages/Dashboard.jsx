@@ -25,7 +25,7 @@ const Dashboard = ({ history, onViewAll }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Total Processed" value={totalScans} subtext="+12% from yesterday" icon={Database} color="bg-blue-500" />
+        <StatCard title="Total Processed" value={totalScans} subtext="Plastic waste objects" icon={Database} color="bg-blue-500" />
         <StatCard title="Purity Rate" value={`${purityRate}%`} subtext="Target: >85%" icon={CheckCircle2} color="bg-emerald-500" />
         <StatCard title="Contaminated" value={dirtyCount} subtext="Requires manual wash" icon={AlertTriangle} color="bg-orange-500" />
         <StatCard title="Top Material" value={topType} subtext="Highest volume today" icon={RefreshCw} color="bg-purple-500" />

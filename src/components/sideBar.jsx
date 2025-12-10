@@ -14,7 +14,7 @@ const Sidebar = ({ activePage, setActivePage, isMobile, isOpen, setIsOpen }) => 
     { id: 'scanner', icon: ScanLine, label: 'Live Scanner' },
     { id: 'history', icon: Database, label: 'Data Logs' },
     { id: 'information', icon: Info, label: 'Information' },
-    { id: 'settings', icon: Settings, label: 'Settings' },
+
   ];
 
   const sidebarClasses = isMobile
@@ -65,8 +65,8 @@ const Sidebar = ({ activePage, setActivePage, isMobile, isOpen, setIsOpen }) => 
               OP
             </div>
             <div>
-              <p className="text-sm font-medium text-white">Operator #402</p>
-              <p className="text-xs text-slate-500">Recycle Center A</p>
+              <p className="text-sm font-medium text-white">Operator</p>
+              <p className="text-xs text-slate-500">Recycle Center</p>
             </div>
           </div>
         </div>
