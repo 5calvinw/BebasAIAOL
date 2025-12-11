@@ -170,12 +170,19 @@ const Scanner = ({ onScanComplete }) => {
       const isSaved = savedSessionsRef.current.has(det.track_id);
 
       // Draw Box
-      ctx.strokeStyle = isSaved ? '#3b82f6' : det.color || '#10B981'; // Blue if saved, else standard color
+      ctx.strokeStyle = isSaved ? '#3b82f6' : det.color || '#10B981'; 
       ctx.lineWidth = 4;
       ctx.strokeRect(rX, rY, rW, rH);
 
-      // Draw Label (REMOVED CONFIDENCE)
-      const text = isSaved ? `SAVED` : `${det.class} | ${det.condition}`;
+      // Draw Label
+      // =========================================================================
+      // DEBUG: TEMPORARY PERCENTAGE DISPLAY FOR DEBUGGING
+      // REMOVE THE "(${confidencePct}%)" PART BEFORE FINAL DEMO
+      // =========================================================================
+      const confidencePct = Math.round(det.confidence * 100);
+      const text = isSaved ? `SAVED` : `${det.class} | ${det.condition} (${confidencePct}%)`;
+      // =========================================================================
+
       ctx.font = 'bold 24px monospace';
       const textMetrics = ctx.measureText(text);
 
@@ -187,26 +194,18 @@ const Scanner = ({ onScanComplete }) => {
     });
   };
 
-  // --- CORE LOGIC: MULTI-ITEM STABILITY CHECK ---
   const handleAutoSaveLogic = async (result) => {
     const trackId = result.track_id;
 
-    // 1. Ignore if already saved
     if (savedSessionsRef.current.has(trackId)) return;
 
-    // 2. Create a signature to detect change (e.g. "PET-Clean")
-    // If the model flickers from "Clean" to "Dirty", we consider that unstable and restart.
     const currentSignature = `${result.class}-${result.condition}`;
 
-    // 3. Get existing tracker for this ID or initialize
     let tracker = scanTrackerRef.current.get(trackId) || { count: 0, signature: currentSignature };
 
-    // 4. Compare Signature
     if (tracker.signature === currentSignature) {
-      // Prediction is STABLE, increment count
       tracker.count += 1;
     } else {
-      // Prediction FLIPPED (e.g., PET -> HDPE). RESTART count.
       tracker.count = 1;
       tracker.signature = currentSignature;
     }
@@ -215,7 +214,6 @@ const Scanner = ({ onScanComplete }) => {
     scanTrackerRef.current.set(trackId, tracker);
 
     // 6. Trigger Save if Threshold Reached (15 Frames)
-    // UPDATED: Changed from 10 to 15 as requested
     if (tracker.count >= 15) {
       // Mark as saved IMMEDIATELY to prevent double-fire while async DB call happens
       savedSessionsRef.current.add(trackId);
@@ -266,11 +264,8 @@ const Scanner = ({ onScanComplete }) => {
     setIsPaused(nextState);
 
     if (nextState) {
-      // We are pausing: Freeze the actual video element
       if (videoRef.current) videoRef.current.pause();
-      // NOTE: We do NOT call clearOverlay() here, so the user can see the last detection
     } else {
-      // We are resuming: Play the video
       if (videoRef.current) videoRef.current.play();
     }
   };

@@ -22,14 +22,15 @@ const HistoryLog = ({ history, onTypeClick }) => {
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Timestamp</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Plastic Type</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Condition</th>
-                {/* REMOVED CONFIDENCE COLUMN */}
+                {/* ADDED CONFIDENCE HEADER */}
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Confidence</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan="4" className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan="5" className="px-6 py-12 text-center text-slate-400">
                     No records found in Database.
                   </td>
                 </tr>
@@ -55,7 +56,10 @@ const HistoryLog = ({ history, onTypeClick }) => {
 
                     <td className="px-6 py-4 text-sm text-slate-700">{item.condition}</td>
 
-                    {/* REMOVED CONFIDENCE DATA */}
+                    {/* ADDED CONFIDENCE DATA */}
+                    <td className="px-6 py-4 text-sm text-slate-600 font-mono">
+                      {item.confidence ? Math.round(item.confidence * 100) : 0}%
+                    </td>
 
                     <td className="px-6 py-4">
                       {item.condition === 'Clean' ? (
