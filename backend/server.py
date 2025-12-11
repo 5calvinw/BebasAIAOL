@@ -11,30 +11,37 @@ import asyncio
 
 # --- CONFIGURATION ---
 YOLO_PATH = "model/result/weights/best.pt"
-RESNET_PATH = "model/result/weights/dual_head_resnet.pth"
+RESNET_PATH = "model/result/weights/robust_resnet.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CLASSES = ["PET", "HDPE", "PVC", "LDPE", "PP", "PS", "OTHER"]
 CONDITIONS = ["Clean", "Dirty"]
 
 # CRITICAL: Match training parameters
-EXPANSION_RATIO = 0.15  # From 6_prepare_resnet.py
+EXPANSION_RATIO = 0.15
 
 
-# --- MODEL DEFINITIONS ---
-class DualHeadResNet(nn.Module):
+# --- UPDATED MODEL DEFINITION (Matches Training) ---
+class RobustResNet(nn.Module):
     def __init__(self):
-        super(DualHeadResNet, self).__init__()
+        super(RobustResNet, self).__init__()
+        # 1. Load Backbone
         self.backbone = models.resnet18(weights=None)
         num_features = self.backbone.fc.in_features
         self.backbone.fc = nn.Identity()
 
+        # 2. MATCH THE NEW TRAINING SIZE (256, not 512)
+        self.hidden_size = 256
+
         self.head_type = nn.Sequential(
-            nn.Linear(num_features, 512),
+            nn.Linear(num_features, self.hidden_size),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 7),
+            nn.Linear(self.hidden_size, 7),
         )
-        self.head_cond = nn.Sequential(nn.Linear(num_features, 512), nn.ReLU(), nn.Dropout(0.5), nn.Linear(512, 2))
+
+        self.head_cond = nn.Sequential(
+            nn.Linear(num_features, self.hidden_size), nn.ReLU(), nn.Dropout(0.5), nn.Linear(self.hidden_size, 2)
+        )
 
     def forward(self, x):
         features = self.backbone(x)
@@ -44,20 +51,22 @@ class DualHeadResNet(nn.Module):
 # --- HELPERS ---
 def load_resnet():
     print(f"Loading ResNet from {RESNET_PATH}...")
-    model = DualHeadResNet().to(DEVICE)
+    # Update class name to match training
+    model = RobustResNet().to(DEVICE)
     try:
         checkpoint = torch.load(RESNET_PATH, map_location=DEVICE)
         model.load_state_dict(checkpoint)
         model.eval()
         if DEVICE.type == "cuda":
             model.half()
+        print("✅ ResNet Loaded Successfully")
     except Exception as e:
         print(f"❌ Error loading ResNet: {e}")
+        print("   Make sure you ran the NEW training script (7_resnet_training.py)!")
     return model
 
 
 def expand_box(x, y, w, h, img_w, img_h, ratio=0.15):
-    """CRITICAL: Matches training preprocessing from 6_prepare_resnet.py"""
     center_x = x + w / 2
     center_y = y + h / 2
     new_w = w * (1 + ratio)
@@ -72,14 +81,17 @@ def expand_box(x, y, w, h, img_w, img_h, ratio=0.15):
 
 
 def pad_to_square(img):
-    """CRITICAL: Matches training preprocessing from 6_prepare_resnet.py"""
+    """
+    CRITICAL: Matches training preprocessing.
+    Pads the image with the background color to make it square.
+    """
     h, w = img.shape[:2]
     if h == w:
         return img
 
     max_side = max(h, w)
 
-    # Sample top-left 10x10 to get background color
+    # Sample top-left 10x10 to get background color (Green Screen Logic)
     sample_h = min(10, h)
     sample_w = min(10, w)
     sample = img[0:sample_h, 0:sample_w]
@@ -112,6 +124,8 @@ class PredictionSmoother:
 
         idx_type = torch.argmax(avg_type).item()
         idx_cond = torch.argmax(avg_cond).item()
+
+        # Return confidence of the winner class
         return idx_type, idx_cond, avg_type[idx_type].item()
 
 
@@ -155,7 +169,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             h_frame, w_frame = frame.shape[:2]
 
-            # Run YOLO with persistence
+            # Run YOLO with persistence (Tracking)
             results = yolo_model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml")
 
             detections_to_send = []
@@ -179,25 +193,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     if (x2 - x1) < 10 or (y2 - y1) < 10:
                         continue
 
-                    # CRITICAL FIX: Apply expansion like training
+                    # 1. Expand Box (Context)
                     box_w = x2 - x1
                     box_h = y2 - y1
                     ex1, ey1, ex2, ey2 = expand_box(x1, y1, box_w, box_h, w_frame, h_frame, EXPANSION_RATIO)
 
                     crop = frame[ey1:ey2, ex1:ex2]
 
-                    # CRITICAL FIX: Apply same preprocessing as training
+                    # 2. Pad to Square (Distortion Fix)
                     crop_padded = pad_to_square(crop)
                     crop_resized = cv2.resize(crop_padded, (224, 224))
                     crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
 
                     batch_crops.append(crop_rgb)
-                    # Store ORIGINAL box coords for display, not expanded ones
+                    # Store ORIGINAL box coords for display
                     batch_meta.append((x1, y1, x2, y2, track_id))
 
             best_result = None
             highest_conf = 0
 
+            # Batch Inference
             if batch_crops:
                 batch_np = np.stack(batch_crops)
                 tensor = torch.from_numpy(batch_np).permute(0, 3, 1, 2).to(DEVICE)
@@ -241,3 +256,9 @@ async def websocket_endpoint(websocket: WebSocket):
         import traceback
 
         traceback.print_exc()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
